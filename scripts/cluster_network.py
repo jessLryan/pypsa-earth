@@ -5,7 +5,8 @@
 
 # -*- coding: utf-8 -*-
 """
-Creates networks clustered to ``{cluster}`` number of zones with aggregated buses, generators and transmission corridors.
+Creates networks clustered to ``{cluster}`` number of zones with aggregated
+buses, generators and transmission corridors.
 
 Relevant Settings
 -----------------
@@ -87,7 +88,7 @@ Description
     **Is it possible to run the model without the** ``simplify_network`` **rule?**
 
         No, the network clustering methods in the PyPSA module
-        `pypsa.networkclustering <https://github.com/PyPSA/PyPSA/blob/master/pypsa/networkclustering.py>`_
+        `pypsa.clustering.spatial <https://github.com/PyPSA/PyPSA/blob/master/pypsa/networkclustering.py>`_
         do not work reliably with multiple voltage levels and transformers.
 
 .. tip::
@@ -118,7 +119,6 @@ Exemplary unsolved network clustered to 37 nodes:
 .. image:: /img/elec_s_37.png
     :width: 40  %
     :align: center
-
 """
 import logging
 import os
@@ -141,7 +141,7 @@ from _helpers import (
 )
 from add_electricity import load_costs
 from build_shapes import add_gdp_data, add_population_data, get_GADM_layer
-from pypsa.networkclustering import (
+from pypsa.clustering.spatial import (
     busmap_by_greedy_modularity,
     busmap_by_hac,
     busmap_by_kmeans,
@@ -614,6 +614,8 @@ def clustering_for_n_clusters(
             .dropna(),
             fill_value=0,
         )
+    if not n.lines.loc[n.lines.carrier == "DC"].empty:
+        clustering.network.lines["underwater_fraction"] = 0
 
     return clustering
 
@@ -692,7 +694,7 @@ if __name__ == "__main__":
         # Fast-path if no clustering is necessary
         busmap = n.buses.index.to_series()
         linemap = n.lines.index.to_series()
-        clustering = pypsa.networkclustering.Clustering(
+        clustering = pypsa.clustering.spatial.Clustering(
             n, busmap, linemap, linemap, pd.Series(dtype="O")
         )
     elif len(n.buses) < n_clusters:

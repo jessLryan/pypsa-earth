@@ -340,7 +340,7 @@ def get_aggregation_strategies(aggregation_strategies):
         from pypsa.clustering.spatial import _make_consense
     except Exception:
         # TODO: remove after new release and update minimum pypsa version
-        from pypsa.networkclustering import _make_consense
+        from pypsa.clustering.spatial import _make_consense
 
     bus_strategies = dict(country=_make_consense("Bus", "country"))
     bus_strategies.update(aggregation_strategies.get("buses", {}))
@@ -572,18 +572,18 @@ def country_name_2_two_digits(country_name):
     return full_name
 
 
-NA_VALUES = ["NULL"]
+NA_VALUES = ["NULL", "", "N/A", "NAN", "NaN", "nan", "Nan", "n/a", "na", "null"]
 
 
 def read_csv_nafix(file, **kwargs):
     "Function to open a csv as pandas file and standardize the na value"
-    if "keep_default_na" in kwargs:
-        del kwargs["keep_default_na"]
-    if "na_values" in kwargs:
-        del kwargs["na_values"]
+    if "keep_default_na" not in kwargs:
+        kwargs["keep_default_na"] = False
+    if "na_values" not in kwargs:
+        kwargs["na_values"] = NA_VALUES
 
     if os.stat(file).st_size > 0:
-        return pd.read_csv(file, **kwargs, keep_default_na=False, na_values=NA_VALUES)
+        return pd.read_csv(file, **kwargs)
     else:
         return pd.DataFrame()
 

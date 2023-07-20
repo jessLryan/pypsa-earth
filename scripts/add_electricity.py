@@ -93,7 +93,7 @@ import pandas as pd
 import powerplantmatching as pm
 import pypsa
 import xarray as xr
-from _helpers import configure_logging, getContinent, update_p_nom_max
+from _helpers import configure_logging, read_csv_nafix, update_p_nom_max
 from powerplantmatching.export import map_country_bus
 from shapely.validation import make_valid
 from vresutils import transfer as vtransfer
@@ -222,7 +222,7 @@ def load_powerplants(ppl_fn):
         "hard coal": "coal",
     }
     return (
-        pd.read_csv(ppl_fn, index_col=0, dtype={"bus": "str"})
+        read_csv_nafix(ppl_fn, index_col=0, dtype={"bus": "str"})
         .powerplant.to_pypsa_names()
         .powerplant.convert_country_to_alpha2()
         .rename(columns=str.lower)
@@ -248,9 +248,38 @@ def attach_load(n, demand_profiles):
     n : pypsa network
         Now attached with load time series
     """
-    demand_df = pd.read_csv(demand_profiles, index_col=0, parse_dates=True)
+    demand_df = read_csv_nafix(demand_profiles, index_col=0, parse_dates=True)
 
     n.madd("Load", demand_df.columns, bus=demand_df.columns, p_set=demand_df)
+
+
+def attach_dc_costs(lines_or_links, costs, length_factor=1.0, simple_hvdc_costs=False):
+    if lines_or_links.empty:
+        return
+
+    if lines_or_links.loc[lines_or_links.carrier == "DC"].empty:
+        return
+
+    dc_b = lines_or_links.carrier == "DC"
+    if simple_hvdc_costs:
+        costs = (
+            lines_or_links.loc[dc_b, "length"]
+            * length_factor
+            * costs.at["HVDC overhead", "capital_cost"]
+        )
+    else:
+        costs = (
+            lines_or_links.loc[dc_b, "length"]
+            * length_factor
+            * (
+                (1.0 - lines_or_links.loc[dc_b, "underwater_fraction"])
+                * costs.at["HVDC overhead", "capital_cost"]
+                + lines_or_links.loc[dc_b, "underwater_fraction"]
+                * costs.at["HVDC submarine", "capital_cost"]
+            )
+            + costs.at["HVDC inverter pair", "capital_cost"]
+        )
+    lines_or_links.loc[dc_b, "capital_cost"] = costs
 
 
 def update_transmission_costs(n, costs, length_factor=1.0, simple_hvdc_costs=False):
@@ -258,35 +287,18 @@ def update_transmission_costs(n, costs, length_factor=1.0, simple_hvdc_costs=Fal
         n.lines["length"] * length_factor * costs.at["HVAC overhead", "capital_cost"]
     )
 
-    if n.links.empty:
-        return
-
-    dc_b = n.links.carrier == "DC"
-    # If there are no "DC" links, then the 'underwater_fraction' column
-    # may be missing. Therefore we have to return here.
-    # TODO: Require fix
-    if n.links.loc[n.links.carrier == "DC"].empty:
-        return
-
-    if simple_hvdc_costs:
-        costs = (
-            n.links.loc[dc_b, "length"]
-            * length_factor
-            * costs.at["HVDC overhead", "capital_cost"]
-        )
-    else:
-        costs = (
-            n.links.loc[dc_b, "length"]
-            * length_factor
-            * (
-                (1.0 - n.links.loc[dc_b, "underwater_fraction"])
-                * costs.at["HVDC overhead", "capital_cost"]
-                + n.links.loc[dc_b, "underwater_fraction"]
-                * costs.at["HVDC submarine", "capital_cost"]
-            )
-            + costs.at["HVDC inverter pair", "capital_cost"]
-        )
-    n.links.loc[dc_b, "capital_cost"] = costs
+    attach_dc_costs(
+        lines_or_links=n.links,
+        costs=costs,
+        length_factor=length_factor,
+        simple_hvdc_costs=simple_hvdc_costs,
+    )
+    attach_dc_costs(
+        lines_or_links=n.lines,
+        costs=costs,
+        length_factor=length_factor,
+        simple_hvdc_costs=simple_hvdc_costs,
+    )
 
 
 def attach_wind_and_solar(
@@ -380,6 +392,11 @@ def attach_conventional_generators(
     )
     _add_missing_carriers_from_costs(n, costs, carriers)
 
+    # Replace carrier "natural gas" with the respective technology (OCGT or CCGT) to align with PyPSA names of "carriers" and avoid filtering "natural gas" powerplants in ppl.query("carrier in @carriers")
+    ppl.loc[ppl["carrier"] == "natural gas", "carrier"] = ppl.loc[
+        ppl["carrier"] == "natural gas", "technology"
+    ]
+
     ppl = (
         ppl.query("carrier in @carriers")
         .join(costs, on="carrier", rsuffix="_r")
@@ -418,7 +435,7 @@ def attach_conventional_generators(
             if f"conventional_{carrier}_{attr}" in conventional_inputs:
                 # Values affecting generators of technology k country-specific
                 # First map generator buses to countries; then map countries to p_max_pu
-                values = pd.read_csv(values, index_col=0).iloc[:, 0]
+                values = read_csv_nafix(values, index_col=0).iloc[:, 0]
                 bus_values = n.buses.country.map(values)
                 n.generators[attr].update(
                     n.generators.loc[idx].bus.map(bus_values).dropna()
